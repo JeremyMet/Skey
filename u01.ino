@@ -9,16 +9,18 @@ volatile byte high_pc ;
 volatile byte low_pc ;
 
 #define LedToggle digitalWrite (Led, !digitalRead(Led))
+#define echo(s) Serial.println(s)
 
+byte* context_array = (byte*) malloc(sizeof(byte)*32) ;
 
 
 typedef struct processus {
   byte id ;
-  byte* context_addr ;
+  void (*fct_ptr)() ;
+  void* proc_SP ;
 } processus ;
 
-const processus NULL_PROCESSUS = { .id = 0, .context_addr = NULL } ; // Id 0 is reserved.
-
+const processus NULL_PROCESSUS = { .id = 0, .fct_ptr = NULL, .proc_SP = NULL } ; // Id 0 is reserved.
 
 typedef struct proc_node {
   processus p ;
@@ -32,10 +34,17 @@ typedef struct proc_queue {
   unsigned int limit_size ;
 } proc_queue ;
 
+proc_queue* new_queue(unsigned int limit_size) ;
+proc_queue* SCHEDULER_QUEUE = new_queue(8) ;
+
+
+/////////////
+
 proc_queue* new_queue(unsigned int limit_size)
 {
   proc_queue* queue = (proc_queue*) malloc(sizeof(proc_queue)) ;
   queue -> limit_size = limit_size ;
+  queue -> current_size = 0 ;
   return queue ;
 }
 
@@ -63,6 +72,7 @@ bool add_to_queue(proc_queue* queue, processus p)
     node->next = NULL ;
     // Add it.
     queue-> TAIL -> next = node ;
+    queue-> TAIL = node ;
     queue-> current_size++ ;
     ret = true ;
   }
@@ -88,7 +98,7 @@ processus pop_from_queue(proc_queue* queue)
 // Print queue (processus) from HEAD to QUEUE.
 void print_queue(proc_queue* queue)
 {
-  unsigned int i = 0 ;
+  unsigned int i ;
   unsigned int current_size = queue->current_size ;
   proc_node* current_node = queue->HEAD ;
   for(i=0;i<current_size;i++)
@@ -104,140 +114,177 @@ void print_queue(proc_queue* queue)
 void setup () {
   Serial.begin(9600) ;
   pinMode (Led, OUTPUT);
-
-
-  // Timer clock = I/O clock / 1024
-  TCCR1B = (1<<CS02)|(1<<CS00);
-  // Clear overflow flag
-  TIFR1  = 1<<TOV1;
-  // Enable Overflow Interrupt
-  TIMSK1 = 1<<TOIE1;
-
-}
-
-
-byte* save_context()
-{
-
-  byte* context_array = (byte*) malloc(sizeof(byte)*32) ;
-  asm(
-
-    "st X+, r0 \n"
-    "st X+, r1 \n"
-    "st X+, r2 \n"
-    "st X+, r3 \n"
-
-    "st X+, r4 \n"
-    "st X+, r5 \n"
-    "st X+, r6 \n"
-    "st X+, r7 \n"
-
-    "st X+, r8 \n"
-    "st X+, r9 \n"
-    "st X+, r10 \n"
-    "st X+, r11 \n"
-
-    "st X+, r12 \n"
-    "st X+, r13 \n"
-    "st X+, r14 \n"
-    "st X+, r15 \n"
-
-    "st X+, r16 \n"
-    "st X+, r17 \n"
-    "st X+, r18 \n"
-    "st X+, r19 \n"
-
-    "st X+, r20 \n"
-    "st X+, r21 \n"
-    "st X+, r22 \n"
-    "st X+, r23 \n"
-
-    "st X+, r24 \n"
-    "st X+, r25 \n"
-  : : "x" (context_array) : "memory");
-
-  return context_array ;
+  processus my_processus_0 ;
+  my_processus_0.id = 1 ;
+  my_processus_0.proc_SP = NULL ;
+  my_processus_0.fct_ptr = &function_0 ;
+  processus my_processus_1 ;
+  my_processus_1.id = 2 ;
+  my_processus_1.proc_SP = NULL ;
+  my_processus_1.fct_ptr = &function_1 ;
+  add_to_queue(SCHEDULER_QUEUE, my_processus_0) ;
+  add_to_queue(SCHEDULER_QUEUE, my_processus_1) ;
+  //set timer1 interrupt at 1Hz
+  TCCR1A = 0;// set entire TCCR1A register to 0
+  TCCR1B = 0;// same for TCCR1B
+  TCNT1  = 0;//initialize counter value to 0
+  // set compare match register for 1hz increments
+  OCR1A = 15624;// = (16*10^6) / (1*1024) - 1 (must be <65536)
+  // turn on CTC mode
+  TCCR1B |= (1 << WGM12);
+  // Set CS10 and CS12 bits for 1024 prescaler
+  TCCR1B |= (1 << CS12) | (1 << CS10);
+  // enable timer compare interrupt
+  TIMSK1 |= (1 << OCIE1A);
 
 }
 
-void load_context(byte* context_addr)
+
+void save_context()
 {
   asm(
-    "ld r0, X+ \n"
-    "ld r1, X+ \n"
-    "ld r2, X+ \n"
-    "ld r3, X+ \n"
+    "push r0 \n"
+    "push r1 \n"
+    "push r2 \n"
+    "push r3 \n"
+    "push r4 \n"
+    "push r5 \n"
+    "push r6 \n"
+    "push r7 \n"
+    "push r8 \n"
+    "push r9 \n"
+    "push r10 \n"
+    "push r11 \n"
+    "push r12 \n"
+    "push r13 \n"
+    "push r14 \n"
+    "push r15 \n"
+    "push r16 \n"
+    "push r17 \n"
+    "push r18 \n"
+    "push r19 \n"
+    "push r20 \n"
+    "push r21 \n"
+    "push r22 \n"
+    "push r23 \n"
+    "push r24 \n"
+    "push r25 \n"
+    "push r26 \n"
+    "push r27 \n"
+    "push r28 \n"
+    "push r29 \n"
+    "push r30 \n"
+    "push r31 \n");
+}
 
-    "ld r4, X+ \n"
-    "ld r5, X+ \n"
-    "ld r6, X+ \n"
-    "ld r7, X+ \n"
-
-    "ld r8, X+ \n"
-    "ld r9, X+ \n"
-    "ld r10, X+ \n"
-    "ld r11, X+ \n"
-
-    "ld r12, X+ \n"
-    "ld r13, X+ \n"
-    "ld r14, X+ \n"
-    "ld r15, X+ \n"
-
-    "ld r16, X+ \n"
-    "ld r17, X+ \n"
-    "ld r18, X+ \n"
-    "ld r19, X+ \n"
-
-    "ld r20, X+ \n"
-    "ld r21, X+ \n"
-    "ld r22, X+ \n"
-    "ld r23, X+ \n"
-
-    "ld r24, X+ \n"
-    "ld r25, X+ \n"
-
-  : : "x" (context_addr) : "memory") ;
-
-  free(context_addr) ;
+void load_context()
+{
+  asm(
+    "pop r31 \n"
+    "pop r30 \n"
+    "pop r29 \n"
+    "pop r28 \n"
+    "pop r27 \n"
+    "pop r26 \n"
+    "pop r25 \n"
+    "pop r24 \n"
+    "pop r23 \n"
+    "pop r22 \n"
+    "pop r21 \n"
+    "pop r20 \n"
+    "pop r19 \n"
+    "pop r18 \n"
+    "pop r17 \n"
+    "pop r16 \n"
+    "pop r15 \n"
+    "pop r14 \n"
+    "pop r13 \n"
+    "pop r12 \n"
+    "pop r11 \n"
+    "pop r10 \n"
+    "pop r9 \n"
+    "pop r8 \n"
+    "pop r7 \n"
+    "pop r6 \n"
+    "pop r5 \n"
+    "pop r4 \n"
+    "pop r3 \n"
+    "pop r2 \n"
+    "pop r1 \n"
+    "pop r0 \n"
+  ) ; // and finally execute the function.
 }
 
 // Routine d'interruption
-ISR(TIMER1_OVF_vect)
+ISR(TIMER1_COMPA_vect)
 {
-  byte* context_array ; context_array = save_context() ;
-  Serial.println("Vous êtes des jambons ! \n") ;
-  load_context(context_array) ;
-  /*asm(
-    "reti \n"
-  ) ;*/
+  echo("Start.") ;
+  print_queue(SCHEDULER_QUEUE) ;
+  // Context Saving (push on stack).
+  save_context() ;
+  //  Serial.println(SP) ;
+  cli() ; // Can not be interrupted.
+  static processus current_process = NULL_PROCESSUS ;
+  static void* previous_SP = SP ;
+//  Serial.println(int(previous_SP)) ;
+  if (SCHEDULER_QUEUE->current_size > 0)
+  {
+    // Add current task to the bottom of the SCHEDULER_QUEUE
+
+    if (current_process.id != 0) // NULL_PROCESSUS can not be set on the queue, except for initialization.
+    {
+      current_process.proc_SP = SP ;
+      add_to_queue(SCHEDULER_QUEUE, current_process) ;
+    }
+    // Load next context and execute.
+    current_process = pop_from_queue(SCHEDULER_QUEUE) ;
+    if (current_process.proc_SP != NULL)
+    {
+      // SP = current_process.proc_SP ;
+      SP = previous_SP ;
+      load_context() ;
+      // current_process.fct_ptr() ; // execute function.
+    }
+    else
+    {
+      SP = previous_SP ;
+      load_context() ;
+      //load_context() ;
+      // current_process.fct_ptr() ; // execute function.
+    }
+    //SP = previous_SP ;
+
+  }
+  //Serial.println("In Scheduler !! Ahah") ;
+  sei() ; // interrupt is on again.
   return ;
 }
 
-// Exemple 
+// Exemple
 
 void function_0()
 {
+  static int a = 0 ;
+  a++ ;
   Serial.println("Vous êtes dans la fonction 0") ;
+  Serial.println(a) ;
 }
 
 void function_1()
 {
-  Serial.println("Vous êtes dans la fonction 0") ;
+  static int a = 18 ;
+  a++ ;
+  Serial.println("Vous êtes dans la fonction 1") ;
+  Serial.println(a) ;
 }
 
 void loop () {
   // Mettre ici le programme. Exemple :
-  processus my_processus ;
-  my_processus.id = 10 ;
-  proc_queue* queue = new_queue(10) ;
-  add_to_queue(queue, my_processus) ;
-  print_queue(queue) ;
+  //print_queue(SCHEDULER_QUEUE) ;
   int i = 0 ;
-  while(true)
-  {
-    i++ ;
-    Serial.println("coucou");
+  while(true) {
     Serial.println(i) ;
-    delay(1000) ;
+    delay(500) ;
+    i++ ;
   }
 }
