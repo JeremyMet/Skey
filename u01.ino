@@ -13,11 +13,14 @@ volatile byte low_pc ;
 
 byte* context_array = (byte*) malloc(sizeof(byte)*32) ;
 
+void* next_SP = NULL ;
+void* PC ;
 
 typedef struct processus {
   byte id ;
   void (*fct_ptr)() ;
   void* proc_SP ;
+  void* proc_PC ;
 } processus ;
 
 const processus NULL_PROCESSUS = { .id = 0, .fct_ptr = NULL, .proc_SP = NULL } ; // Id 0 is reserved.
@@ -111,7 +114,7 @@ void print_queue(proc_queue* queue)
 
 
 
-void setup () {
+void setup() {
   Serial.begin(9600) ;
   pinMode (Led, OUTPUT);
   processus my_processus_0 ;
@@ -140,8 +143,14 @@ void setup () {
 }
 
 
-void save_context()
+
+// Routine d'interruption
+ISR(TIMER1_COMPA_vect)
 {
+  echo("Interrupt") ; echo(int(SP)) ;
+  static processus current_process = NULL_PROCESSUS ;
+  static void* previous_SP = NULL ;
+  cli() ; // Can not be interrupted during Scheduling.
   asm(
     "push r0 \n"
     "push r1 \n"
@@ -175,88 +184,66 @@ void save_context()
     "push r29 \n"
     "push r30 \n"
     "push r31 \n");
-}
-
-void load_context()
-{
-  asm(
-    "pop r31 \n"
-    "pop r30 \n"
-    "pop r29 \n"
-    "pop r28 \n"
-    "pop r27 \n"
-    "pop r26 \n"
-    "pop r25 \n"
-    "pop r24 \n"
-    "pop r23 \n"
-    "pop r22 \n"
-    "pop r21 \n"
-    "pop r20 \n"
-    "pop r19 \n"
-    "pop r18 \n"
-    "pop r17 \n"
-    "pop r16 \n"
-    "pop r15 \n"
-    "pop r14 \n"
-    "pop r13 \n"
-    "pop r12 \n"
-    "pop r11 \n"
-    "pop r10 \n"
-    "pop r9 \n"
-    "pop r8 \n"
-    "pop r7 \n"
-    "pop r6 \n"
-    "pop r5 \n"
-    "pop r4 \n"
-    "pop r3 \n"
-    "pop r2 \n"
-    "pop r1 \n"
-    "pop r0 \n"
-  ) ; // and finally execute the function.
-}
-
-// Routine d'interruption
-ISR(TIMER1_COMPA_vect)
-{
-  echo("Start.") ;
-  print_queue(SCHEDULER_QUEUE) ;
-  // Context Saving (push on stack).
-  save_context() ;
-  //  Serial.println(SP) ;
-  cli() ; // Can not be interrupted.
-  static processus current_process = NULL_PROCESSUS ;
-  static void* previous_SP = SP ;
-//  Serial.println(int(previous_SP)) ;
+  // Scheduling Part (Round-Robin)
+  // Add current task to the bottom of the SCHEDULER_QUEUE
+  if (current_process.id != 0) // NULL_PROCESSUS can not be set on the queue, except for initialization.
+  {
+    current_process.proc_SP = SP ;
+    add_to_queue(SCHEDULER_QUEUE, current_process) ;
+  }
+  // Pop next processus, Load next context and then execute.
   if (SCHEDULER_QUEUE->current_size > 0)
   {
-    // Add current task to the bottom of the SCHEDULER_QUEUE
-
-    if (current_process.id != 0) // NULL_PROCESSUS can not be set on the queue, except for initialization.
-    {
-      current_process.proc_SP = SP ;
-      add_to_queue(SCHEDULER_QUEUE, current_process) ;
-    }
-    // Load next context and execute.
     current_process = pop_from_queue(SCHEDULER_QUEUE) ;
+    previous_SP = SP+32 ;
+    //echo(">>> ") ; echo(int(previous_SP)) ;
     if (current_process.proc_SP != NULL)
     {
-      // SP = current_process.proc_SP ;
-      SP = previous_SP ;
-      load_context() ;
-      // current_process.fct_ptr() ; // execute function.
+      SP = current_process.proc_SP ;
+      asm(
+        "pop r31 \n"
+        "pop r30 \n"
+        "pop r29 \n"
+        "pop r28 \n"
+        "pop r27 \n"
+        "pop r26 \n"
+        "pop r25 \n"
+        "pop r24 \n"
+        "pop r23 \n"
+        "pop r22 \n"
+        "pop r21 \n"
+        "pop r20 \n"
+        "pop r19 \n"
+        "pop r18 \n"
+        "pop r17 \n"
+        "pop r16 \n"
+        "pop r15 \n"
+        "pop r14 \n"
+        "pop r13 \n"
+        "pop r12 \n"
+        "pop r11 \n"
+        "pop r10 \n"
+        "pop r9 \n"
+        "pop r8 \n"
+        "pop r7 \n"
+        "pop r6 \n"
+        "pop r5 \n"
+        "pop r4 \n"
+        "pop r3 \n"
+        "pop r2 \n"
+        "pop r1 \n"
+        "pop r0 \n"
+      ) ; // and finally execute the function.
     }
-    else
-    {
-      SP = previous_SP ;
-      load_context() ;
-      //load_context() ;
-      // current_process.fct_ptr() ; // execute function.
-    }
-    //SP = previous_SP ;
-
+    // execute function  <-- here.
+    (*current_process.fct_ptr)() ;
+    SP = previous_SP ;
   }
-  //Serial.println("In Scheduler !! Ahah") ;
-  sei() ; // interrupt is on again.
+  else
+  {
+    current_process = NULL_PROCESSUS ;
+  }
+  sei() ; // Interrupt is on again.
   return ;
 }
 
@@ -266,6 +253,7 @@ void function_0()
 {
   static int a = 0 ;
   a++ ;
+  echo(int(PC)) ; 
   Serial.println("Vous êtes dans la fonction 0") ;
   Serial.println(a) ;
 }
@@ -279,12 +267,5 @@ void function_1()
 }
 
 void loop () {
-  // Mettre ici le programme. Exemple :
-  //print_queue(SCHEDULER_QUEUE) ;
-  int i = 0 ;
-  while(true) {
-    Serial.println(i) ;
-    delay(500) ;
-    i++ ;
-  }
+  while(true) {}
 }
